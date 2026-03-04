@@ -1,44 +1,32 @@
 version: '3.8'
 
 services:
-  # FastAPI Backend Service
   backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: enterprise-kb-backend
+    container_name: enterprise-knowledge-bot
     ports:
       - "8000:8000"
     environment:
       - FASTAPI_HOST=0.0.0.0
       - FASTAPI_PORT=8000
-      - LOG_LEVEL=INFO
     volumes:
-      - ./app:/app/app
+      - ./app:/app/app:ro
       - ./data:/app/data
-    depends_on:
-      - chromadb
+      - ./chroma_data:/app/chroma_data
     networks:
       - enterprise-kb-network
     restart: unless-stopped
-
-  # ChromaDB Vector Database Service
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: enterprise-kb-chromadb
-    ports:
-      - "8001:8000"
-    environment:
-      - IS_PERSISTENT=true
-    volumes:
-      - chroma_data:/chroma/data
-    networks:
-      - enterprise-kb-network
-    restart: unless-stopped
+    mem_limit: 6g     # Giới hạn 6GB RAM, chừa 2GB cho hệ điều hành
+    cpus: "2.0"       # Giới hạn tối đa 2 CPU cores
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
   enterprise-kb-network:
     driver: bridge
-
-volumes:
-  chroma_data:
