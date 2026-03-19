@@ -63,3 +63,8 @@ docker-compose.override.yml
 # OS
 .DS_Store
 Thumbs.db
+
+# Debug Scripts & Internal Reports (Not for Version Control)
+check_db.py
+FINAL_TEST_REPORT.md
+SECURITY_AUDIT_REPORT.md

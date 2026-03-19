@@ -6,8 +6,9 @@ load_dotenv(override=True)
 
 class Settings:
     HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    LLM_MODEL = os.getenv("LLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.3")
+    LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
     CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_data")
     
     # Ép kiểu dữ liệu cho an toàn
