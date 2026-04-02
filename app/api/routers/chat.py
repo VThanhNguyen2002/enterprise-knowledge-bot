@@ -9,9 +9,12 @@ router = APIRouter()
 @limiter.limit("5/minute")
 async def chat_endpoint(request: Request, body: QuestionRequest):
     try:
-        answer = rag_service.chat(body.question)
+        answer = rag_service.chat(
+            question=body.question,
+            history=[m.model_dump() for m in body.history],
+        )
         return {"status": "success", "question": body.question, "answer": answer}
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Đã xảy ra lỗi hệ thống khi xử lý câu hỏi.")
