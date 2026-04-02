@@ -147,41 +147,82 @@ Trả lời:"""
             logger.error(f"Lỗi Ingestion: {_sanitize_logs(str(e))}")
             raise
 
-    # ── Chat (stateful) ───────────────────────────────────────────────────────
+    # ── Query reformulation prompt ─────────────────────────────────────────────
+    _CONDENSE_TEMPLATE = """Given the conversation history below and a follow-up question, \
+rewrite the follow-up into a fully self-contained standalone question in the same language. \
+If the follow-up is already standalone (no pronouns, no references to prior turns), \
+return it unchanged.
+
+Conversation history:
+{history}
+
+Follow-up question: {question}
+Standalone question:"""
+
+    # ── Chat (stateful + query reformulation) ─────────────────────────────────
     def chat(self, question: str, history: list[dict] | None = None) -> str:
         """
+        Full RAG pipeline with query reformulation for context-blind retrieval fix.
+
+        Pipeline:
+            1. Serialize history to plain text.
+            2. If history exists → condense follow-up into standalone question via LLM.
+            3. Retrieve context using the standalone question.
+            4. Answer using original question + retrieved context + history.
+
         Args:
             question: Current user question (already validated upstream).
             history:  List of {"role": "user"|"assistant", "content": str}.
         Returns:
             Plain-text answer from the LLM.
         """
-        # 1. Serialize history to plain text
+        # 1. Serialize history
         history_text = ""
         for msg in (history or []):
             prefix = "User" if msg.get("role") == "user" else "Assistant"
             history_text += f"{prefix}: {msg.get('content', '')}\n"
 
-        # 2. Retrieve context chunks
+        # 2. Query reformulation — only when there is prior history
+        if history_text.strip():
+            condense_prompt = PromptTemplate.from_template(self._CONDENSE_TEMPLATE)
+            condense_chain = condense_prompt | self.llm | StrOutputParser()
+            try:
+                standalone_question = condense_chain.invoke({
+                    "history": history_text,
+                    "question": question,
+                })
+                logger.info(
+                    f"[Query Reformulation] '{question}' → '{standalone_question.strip()}'"
+                )
+            except Exception as e:
+                # Fallback: use original question if reformulation fails
+                logger.warning(f"Reformulation failed, using raw question: {e}")
+                standalone_question = question
+        else:
+            # First turn — no history, no reformulation needed
+            standalone_question = question
+
+        # 3. Retrieve context using the standalone (reformulated) question
         retriever = self.vector_store.as_retriever(
             search_kwargs={"k": settings.RETRIEVER_K}
         )
-        docs = retriever.invoke(question)
+        docs = retriever.invoke(standalone_question)
         context = "\n\n".join(d.page_content for d in docs)
 
-        # 3. Build and invoke chain
-        prompt = PromptTemplate.from_template(self._prompt_template)
-        chain = prompt | self.llm | StrOutputParser()
+        # 4. Answer using the original question (user-facing tone) + context + history
+        answer_prompt = PromptTemplate.from_template(self._prompt_template)
+        answer_chain = answer_prompt | self.llm | StrOutputParser()
 
         try:
-            return chain.invoke({
+            return answer_chain.invoke({
                 "history": history_text,
                 "context": context,
-                "question": question,
+                "question": question,   # raw question keeps natural phrasing in the reply
             })
         except Exception as e:
             logger.error(f"Lỗi Chatbot: {_sanitize_logs(str(e))}")
             raise
+
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
