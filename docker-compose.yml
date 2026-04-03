@@ -1,32 +1,57 @@
 version: '3.8'
 
 services:
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
   backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: enterprise-knowledge-bot
+    container_name: ekb-backend
     ports:
       - "8000:8000"
+    env_file:
+      - .env                         # GROQ_API_KEY, ALLOWED_ORIGINS, etc.
     environment:
-      - FASTAPI_HOST=0.0.0.0
-      - FASTAPI_PORT=8000
+      - ALLOWED_ORIGINS=http://localhost:8501
+      - CHROMA_PATH=/app/chroma_data
     volumes:
-      - ./app:/app/app:ro
-      - ./data:/app/data
-      - ./chroma_data:/app/chroma_data
+      - chroma_data:/app/chroma_data # Persistent vector DB
+      - ./data:/app/data             # Uploaded documents
     networks:
-      - enterprise-kb-network
+      - ekb-network
     restart: unless-stopped
-    mem_limit: 6g     # Giới hạn 6GB RAM, chừa 2GB cho hệ điều hành
-    cpus: "2.0"       # Giới hạn tối đa 2 CPU cores
+    mem_limit: 6g
+    cpus: "2.0"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 20s
+
+  # ── Streamlit Frontend ──────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: ekb-frontend
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - API_BASE_URL=http://backend:8000  # Internal service-name resolution
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ekb-network
+    restart: unless-stopped
+    mem_limit: 512m
+
+volumes:
+  chroma_data:                         # Named volume → survives container restarts
 
 networks:
-  enterprise-kb-network:
+  ekb-network:
     driver: bridge

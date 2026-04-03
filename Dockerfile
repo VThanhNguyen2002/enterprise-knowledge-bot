@@ -1,19 +1,32 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TRANSFORMERS_CACHE=/app/.cache/huggingface
 
-# Cài đặt thư viện hệ thống cần thiết cho ChromaDB
-RUN apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
+# System deps required by ChromaDB & sentence-transformers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Cài đặt Python packages
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies from pinned versions for full reproducibility
+COPY requirements-prod.txt .
+RUN pip install --no-cache-dir -r requirements-prod.txt
 
-# Copy source code
-COPY . .
+# ── Pre-download all-MiniLM-L6-v2 at BUILD TIME ──────────────────────────────
+# This eliminates the cold-start latency spike on the first upload request.
+RUN python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('all-MiniLM-L6-v2'); \
+print('✅ Model cached.')"
+
+# Copy application source
+COPY app/ ./app/
 
 EXPOSE 8000
 
-# Chạy Uvicorn với 2 workers để tối ưu hiệu suất cho máy ảo 2 cores
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
