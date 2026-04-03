@@ -94,8 +94,10 @@ def render_chat_input(client: KnowledgeBotClient, messages: list) -> list:
                         history=messages[:-1],  # exclude current user msg
                     )
                     answer = result.get("answer", "")
+                    sources = result.get("sources", [])
                 except Exception as e:
                     answer = ""
+                    sources = []
                     st.toast(f"❌ Error: {e}", icon="❌")
 
             # Simulate streaming / typing effect
@@ -105,6 +107,21 @@ def render_chat_input(client: KnowledgeBotClient, messages: list) -> list:
                 placeholder.markdown(streamed + "▌")
                 time.sleep(0.03)
             placeholder.markdown(streamed.strip())
+
+            # 📄 Source citation expander
+            if sources:
+                with st.expander(f"📄 Sources ({len(sources)} chunks used)"):
+                    seen = set()
+                    for src in sources:
+                        fname = src.get("filename", "unknown")
+                        snippet = src.get("snippet", "")
+                        if fname not in seen:
+                            seen.add(fname)
+                            st.markdown(
+                                f"`📁 {fname}`",
+                                help="Source document",
+                            )
+                        st.caption(f"“{snippet}…”")
 
         messages.append({"role": "assistant", "content": answer})
 

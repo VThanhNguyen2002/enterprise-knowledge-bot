@@ -1,19 +1,24 @@
 from fastapi import APIRouter, HTTPException, Request
-from app.schemas.request import QuestionRequest
+from app.schemas.request import QuestionRequest, ChatResponse
 from app.services.rag_service import rag_service
 from app.core.limiter import limiter
 
 router = APIRouter()
 
-@router.post("/chat/")
+@router.post("/chat/", response_model=ChatResponse)
 @limiter.limit("5/minute")
 async def chat_endpoint(request: Request, body: QuestionRequest):
     try:
-        answer = rag_service.chat(
+        result = rag_service.chat(
             question=body.question,
             history=[m.model_dump() for m in body.history],
         )
-        return {"status": "success", "question": body.question, "answer": answer}
+        return ChatResponse(
+            status="success",
+            question=body.question,
+            answer=result["answer"],
+            sources=result["sources"],
+        )
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception:

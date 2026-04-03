@@ -28,7 +28,7 @@ def _scan_text(v: str) -> str:
     return v
 
 
-# ── Models ─────────────────────────────────────────────────────────────────────
+# ── Request Models ─────────────────────────────────────────────────────────────
 class ChatMessage(BaseModel):
     """Single turn in conversation history."""
     role: str     # "user" | "assistant"
@@ -54,3 +54,18 @@ class QuestionRequest(BaseModel):
                 raise ValueError("Nội dung lịch sử quá dài.")
             _scan_text(msg.content)
         return messages
+
+
+# ── Response Models ────────────────────────────────────────────────────────────
+class SourceChunk(BaseModel):
+    """A single retrieved document chunk used to generate the answer."""
+    filename: str
+    snippet: str   # First 200 chars of the chunk content
+
+
+class ChatResponse(BaseModel):
+    """Typed response envelope for POST /chat/."""
+    status: str
+    question: str
+    answer: str
+    sources: list[SourceChunk]

@@ -119,12 +119,13 @@ Trả lời:"""
     # ── Ingestion ─────────────────────────────────────────────────────────────
     def ingest_document(self, file_path: str) -> str:
         """
-        Load → poison scan → chunk → embed → store.
-        Guarded by asyncio.Semaphore(2) — must be called from async context.
+        Load → poison scan → metadata inject → chunk → embed → store.
+        Filename is injected into every chunk's metadata for source citation.
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Không tìm thấy file: {file_path}")
 
+        filename = os.path.basename(file_path)
         loader = TextLoader(file_path, encoding='utf-8')
         docs = loader.load()
 
@@ -132,17 +133,20 @@ Trả lời:"""
             if _is_poisoned_content(doc.page_content):
                 logger.warning(f"CẢNH BÁO: Nội dung độc hại phát hiện trong {file_path}")
                 raise ValueError("Tài liệu vi phạm chính sách an toàn dữ liệu.")
+            # ✅ Inject filename into every document's metadata
+            doc.metadata["filename"] = filename
 
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP
         )
         chunks = splitter.split_documents(docs)
+        # Metadata is inherited by all chunks from parent docs
 
         try:
             self.vector_store.add_documents(chunks)
-            logger.info(f"Lưu thành công {len(chunks)} đoạn vào ChromaDB.")
-            return f"Đã xử lý an toàn {len(chunks)} đoạn văn bản."
+            logger.info(f"Lưu thành công {len(chunks)} đoạn (filename='{filename}') vào ChromaDB.")
+            return f"Đã xử lý an toàn {len(chunks)} đoạn văn bản từ '{filename}'."
         except Exception as e:
             logger.error(f"Lỗi Ingestion: {_sanitize_logs(str(e))}")
             raise
@@ -159,30 +163,47 @@ Conversation history:
 Follow-up question: {question}
 Standalone question:"""
 
-    # ── Chat (stateful + query reformulation) ─────────────────────────────────
-    def chat(self, question: str, history: list[dict] | None = None) -> str:
+    # ── Chat (stateful + query reformulation + source citation) ──────────────
+    def chat(
+        self,
+        question: str,
+        history: list[dict] | None = None,
+        filter: dict | None = None,
+    ) -> dict:
         """
-        Full RAG pipeline with query reformulation for context-blind retrieval fix.
+        Full RAG pipeline with query reformulation, sliding window memory,
+        and source citation.
 
         Pipeline:
-            1. Serialize history to plain text.
-            2. If history exists → condense follow-up into standalone question via LLM.
-            3. Retrieve context using the standalone question.
-            4. Answer using original question + retrieved context + history.
+            1. Sliding window: keep only last 4 messages (2 turns) to guard token limits.
+            2. Serialize windowed history to plain text.
+            3. If history exists → condense follow-up into standalone question via LLM.
+            4. Retrieve context using standalone question (optional metadata filter).
+            5. Answer using original question + context + history.
+            6. Return answer + source citations.
 
         Args:
             question: Current user question (already validated upstream).
             history:  List of {"role": "user"|"assistant", "content": str}.
+            filter:   Optional ChromaDB metadata filter, e.g. {"filename": "policy.txt"}.
         Returns:
-            Plain-text answer from the LLM.
+            dict with keys: answer (str), sources (list[dict]).
         """
-        # 1. Serialize history
+        # 1. Sliding window — keep last 4 messages (2 full turns) to avoid token explosion
+        raw_history = history or []
+        if len(raw_history) > 4:
+            logger.info(
+                f"[Sliding Window] History truncated: {len(raw_history)} → 4 messages"
+            )
+            raw_history = raw_history[-4:]
+
+        # 2. Serialize windowed history
         history_text = ""
-        for msg in (history or []):
+        for msg in raw_history:
             prefix = "User" if msg.get("role") == "user" else "Assistant"
             history_text += f"{prefix}: {msg.get('content', '')}\n"
 
-        # 2. Query reformulation — only when there is prior history
+        # 3. Query reformulation — only when there is prior history
         if history_text.strip():
             condense_prompt = PromptTemplate.from_template(self._CONDENSE_TEMPLATE)
             condense_chain = condense_prompt | self.llm | StrOutputParser()
@@ -195,30 +216,39 @@ Standalone question:"""
                     f"[Query Reformulation] '{question}' → '{standalone_question.strip()}'"
                 )
             except Exception as e:
-                # Fallback: use original question if reformulation fails
                 logger.warning(f"Reformulation failed, using raw question: {e}")
                 standalone_question = question
         else:
-            # First turn — no history, no reformulation needed
             standalone_question = question
 
-        # 3. Retrieve context using the standalone (reformulated) question
-        retriever = self.vector_store.as_retriever(
-            search_kwargs={"k": settings.RETRIEVER_K}
-        )
+        # 4. Retrieve with optional metadata pre-filter (e.g. filter={"filename": "doc.txt"})
+        search_kwargs: dict = {"k": settings.RETRIEVER_K}
+        if filter:
+            search_kwargs["filter"] = filter
+        retriever = self.vector_store.as_retriever(search_kwargs=search_kwargs)
         docs = retriever.invoke(standalone_question)
         context = "\n\n".join(d.page_content for d in docs)
 
-        # 4. Answer using the original question (user-facing tone) + context + history
+        # Build source citations from chunk metadata
+        sources = [
+            {
+                "filename": d.metadata.get("filename", "unknown"),
+                "snippet": d.page_content[:200].replace("\n", " "),
+            }
+            for d in docs
+        ]
+
+        # 5. Answer chain
         answer_prompt = PromptTemplate.from_template(self._prompt_template)
         answer_chain = answer_prompt | self.llm | StrOutputParser()
 
         try:
-            return answer_chain.invoke({
+            answer = answer_chain.invoke({
                 "history": history_text,
                 "context": context,
-                "question": question,   # raw question keeps natural phrasing in the reply
+                "question": question,
             })
+            return {"answer": answer, "sources": sources}
         except Exception as e:
             logger.error(f"Lỗi Chatbot: {_sanitize_logs(str(e))}")
             raise
