@@ -4,6 +4,12 @@
 >
 > A production-grade RAG chatbot built with FastAPI, LangChain, ChromaDB & Groq. Designed for enterprise internal knowledge retrieval with advanced query reformulation and multi-layer security guardrails.
 
+### 🌐 Live Demo
+
+[![Hugging Face Spaces](https://img.shields.io/badge/🤗%20Hugging%20Face-Live%20Demo-blue?style=for-the-badge)](https://huggingface.co/spaces/vietthanhnguyen20062002/enterprise-knowledge-bot)
+
+> ⚠️ **Free-tier note**: The Space may take **1–2 min to cold-start** on first load (HuggingFace spins down idle Spaces). Please be patient — the 🟢 indicator will turn green once ready.
+
 ---
 
 ## ⚡ Key Features
@@ -65,6 +71,31 @@
               │  data/     │          └──────────────┘
               └────────────┘
 ```
+
+---
+
+## 🚀 Deployment Strategy
+
+### Free-Tier Production (Hugging Face Spaces)
+
+To fit within the **512 MB–1 GB RAM** constraint of free PaaS platforms, the architecture is optimized into a **Single-Container Monolith**:
+
+| Component | Free-Tier Approach | Why |
+|---|---|---|
+| **Web Server** | `start.sh` runs Uvicorn + Streamlit in one container | No separate process manager needed |
+| **Ingestion** | Synchronous — ingest runs inside the upload request | Avoids Redis/Celery broker overhead |
+| **Reverse Proxy** | Removed Nginx/Gunicorn | HuggingFace provides built-in load balancer + SSL termination |
+| **Vector DB** | ChromaDB local file storage | No external DB service cost |
+
+```
+[ Single Docker Container ]
+  ├─ bash start.sh
+  │     ├─ uvicorn app.main:app --port 8000  (background)
+  │     └─ streamlit run app_ui/main_app.py --port 7860  (foreground)
+  └─ Streamlit ←→ FastAPI via http://localhost:8000
+```
+
+> **Enterprise deployment**: The full multi-container stack (Nginx, Gunicorn, Redis, Celery, Qdrant) is documented in [`scalability-roadmap.md`](scalability-roadmap.md) and preserved in [`docker-compose.yml`](docker-compose.yml) for deployment on a paid VPS.
 
 ---
 
@@ -260,6 +291,31 @@ MIT © 2025
          ▼
   Streamlit: Hiển thị câu trả lời từng từ (typing effect)
 ```
+
+---
+
+## 🚀 Chiến Lược Triển Khai
+
+### Free-Tier Production (Hugging Face Spaces)
+
+Để phù hợp với giới hạn **512 MB–1 GB RAM** của các nền tảng PaaS miễn phí, kiến trúc được tối ưu thành **Monolith Single-Container**:
+
+| Thành phần | Cách tiếp cận Free-Tier | Lý do |
+|---|---|---|
+| **Web Server** | `start.sh` chạy Uvicorn + Streamlit trong một container | Không cần process manager riêng biệt |
+| **Ingestion** | Đồng bộ — xử lý ngay trong request upload | Tránh tốn RAM cho Redis/Celery broker |
+| **Reverse Proxy** | Đã loại bỏ Nginx/Gunicorn | HuggingFace cung cấp sẵn load balancer và SSL |
+| **Vector DB** | ChromaDB lưu file cục bộ | Không tốn chi phí DB ngoài |
+
+```
+[ Single Docker Container ]
+  ├─ bash start.sh
+  │     ├─ uvicorn app.main:app --port 8000  (chạy nền)
+  │     └─ streamlit run app_ui/main_app.py --port 7860  (foreground)
+  └─ Streamlit ←→ FastAPI qua http://localhost:8000
+```
+
+> **Triển khai doanh nghiệp**: Kiến trúc multi-container đầy đủ (Nginx, Gunicorn, Redis, Celery, Qdrant) được ghi chép trong `scalability-roadmap.md` và lưu trong `docker-compose.yml` — sẵn sàng deploy lên VPS trả phí.
 
 ---
 
