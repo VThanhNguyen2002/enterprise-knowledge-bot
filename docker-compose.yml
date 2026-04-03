@@ -1,24 +1,49 @@
 version: '3.8'
 
 services:
+  # ── Redis (Message Broker + Semantic Cache) ─────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ekb-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data                 # Persistent AOF storage
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - ekb-network
+    restart: unless-stopped
+    mem_limit: 320m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # ── FastAPI Backend ─────────────────────────────────────────────────────────
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - SAFETY_LEVEL=${SAFETY_LEVEL:-scan}  # Override with 'skip' in dev
     container_name: ekb-backend
     ports:
       - "8000:8000"
     env_file:
-      - .env                         # GROQ_API_KEY, ALLOWED_ORIGINS, etc.
+      - .env
     environment:
       - ALLOWED_ORIGINS=http://localhost:8501
       - CHROMA_PATH=/app/chroma_data
+      - REDIS_URL=redis://redis:6379/0        # Internal Docker service name
     volumes:
-      - chroma_data:/app/chroma_data # Persistent vector DB
-      - ./data:/app/data             # Uploaded documents
+      - chroma_data:/app/chroma_data
+      - ./data:/app/data
     networks:
       - ekb-network
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     mem_limit: 6g
     cpus: "2.0"
@@ -28,6 +53,33 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  # ── Celery Worker (Async Ingestion) ─────────────────────────────────────────
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - SAFETY_LEVEL=skip                  # Same image as backend; scan already done
+    container_name: ekb-celery-worker
+    command: ["celery", "-A", "app.worker.celery_app", "worker",
+              "--loglevel=info", "--concurrency=2", "-Q", "ingest"]
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PATH=/app/chroma_data
+    volumes:
+      - chroma_data:/app/chroma_data         # Shared vector DB volume
+      - ./data:/app/data
+    networks:
+      - ekb-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 4g
+    cpus: "2.0"
 
   # ── Streamlit Frontend ──────────────────────────────────────────────────────
   frontend:
@@ -40,7 +92,7 @@ services:
     env_file:
       - .env
     environment:
-      - API_BASE_URL=http://backend:8000  # Internal service-name resolution
+      - API_BASE_URL=http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
@@ -50,7 +102,8 @@ services:
     mem_limit: 512m
 
 volumes:
-  chroma_data:                         # Named volume → survives container restarts
+  chroma_data:                               # ChromaDB — survives container restarts
+  redis_data:                                # Redis AOF persistence
 
 networks:
   ekb-network:
