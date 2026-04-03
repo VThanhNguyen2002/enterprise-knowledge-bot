@@ -1,0 +1,28 @@
+# .safety-policy.yml — Supply Chain CVE Audit Policy
+# Docs: https://docs.safetycli.com/safety-docs/reference/policy-file
+#
+# This file is used by `safety scan` during the Docker build (Stage 1).
+# The build will FAIL if any vulnerability with CVSS score >= 7.0 is found.
+#
+# Adding a CVE to `ignore-vulnerabilities` should ONLY be done when:
+#   1. A patch is not yet available upstream
+#   2. The vulnerability is not exploitable in our deployment context
+#   3. A documented mitigation is in place
+#   4. The ignore is time-limited (expires field required)
+
+version: "3.0"
+
+scan:
+  # Fail build only on HIGH and CRITICAL vulnerabilities (CVSS >= 7.0)
+  fail-on-cvss: 7.0
+
+  # Max scan time before timeout (seconds)
+  timeout: 120
+
+# ── Audited exceptions (document ALL ignores with justification) ──────────────
+# ignore-vulnerabilities:
+#   - id: "EXAMPLE-12345"
+#     reason: "Not exploitable — we do not use the affected code path"
+#     expires: "2025-12-31"
+#
+# Add real entries here as needed. NEVER leave undocumented ignores.
