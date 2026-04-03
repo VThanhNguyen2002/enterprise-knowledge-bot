@@ -3,30 +3,39 @@ FROM python:3.11-slim AS builder
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    TRANSFORMERS_CACHE=/app/.cache/huggingface
+    TRANSFORMERS_CACHE=/app/.cache/huggingface \
+    # Streamlit connects to FastAPI via localhost (same container)
+    API_BASE_URL=http://localhost:8000
 
-# System deps required by ChromaDB & sentence-transformers
+# System deps: gcc/g++ for ChromaDB/sentence-transformers, curl for health watchdog
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies from pinned versions for full reproducibility
-COPY requirements-prod.txt .
-RUN pip install --no-cache-dir -r requirements-prod.txt
+# Install all dependencies (backend + frontend in one image)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Pre-download all-MiniLM-L6-v2 at BUILD TIME ──────────────────────────────
-# This eliminates the cold-start latency spike on the first upload request.
+# Eliminates cold-start latency spike on first upload in production.
 RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
 SentenceTransformer('all-MiniLM-L6-v2'); \
 print('✅ Model cached.')"
 
-# Copy application source
+# Copy application source (backend + frontend + launcher)
 COPY app/ ./app/
+COPY app_ui/ ./app_ui/
+COPY start.sh ./
 
-EXPOSE 8000
+RUN chmod +x start.sh
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+# Port 7860 = HuggingFace Spaces default public port (Streamlit)
+# Port 8000 = FastAPI internal (not exposed to host — same container)
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# start.sh: boots Uvicorn (bg) + waits for /health + exec's Streamlit (fg)
+CMD ["bash", "start.sh"]

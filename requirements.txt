@@ -1,0 +1,23 @@
+# --- API Backend Core ---
+fastapi
+uvicorn[standard]
+python-multipart          # Bắt buộc phải có để FastAPI hứng file upload
+slowapi                   # Middleware xử lý Rate Limit (Chống spam)
+
+# --- AI & RAG Pipeline ---
+langchain-core            # Core interface của LangChain
+langchain-community       # Chứa các tool tích hợp như Document Loaders, Vectorstores
+langchain-text-splitters  # Chuyên xử lý cắt nhỏ văn bản (Chunking)
+langchain-openai          # Dùng làm Client gọi API tương thích chuẩn OpenAI (dùng cho Groq)
+langchain-huggingface     # Dùng để chạy Embedding Offline
+chromadb                  # Vector Database lưu trữ chunk
+sentence-transformers     # Model all-MiniLM-L6-v2
+
+# --- Frontend UI ---
+streamlit
+requests                  # Để Streamlit gọi HTTP xuống FastAPI
+
+# --- Utilities & Testing ---
+python-dotenv             # Đọc file .env
+pytest
+pytest-asyncio
