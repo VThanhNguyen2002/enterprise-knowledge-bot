@@ -48,10 +48,14 @@ env/
 
 # Data and Models
 data/chroma_db/
+chroma_data/         # ChromaDB persistent storage — never commit
+data/                # Uploaded documents
 *.pdf
-*.txt
 *.docx
 *.md5
+
+# Test cache
+.pytest_cache/
 
 # Logs
 logs/
