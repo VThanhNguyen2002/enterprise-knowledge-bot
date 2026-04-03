@@ -16,6 +16,15 @@ _DANGEROUS_PATTERNS = [
     r'(?i)you\s+are\s+now',
     r'(?i)new\s+persona',
     r'(?i)from\s+now\s+on',
+    # LLM-specific injection tokens
+    r'(?i)\[INST\]',
+    r'(?i)<<SYS>>',
+    r'(?i)^\s*system\s*:',           # "system: ..." role injection
+    # Cyrillic homoglyph variant of "ignore" (І = Cyrillic capital I)
+    r'\u0406gnor',
+    # Accent-encoded evasion: ig.ore, instruct.ons (Latin Extended)
+    r'(?i)ign[\u00f3\u00f2\u00f4\u00f5\u00f6]re',
+    r'(?i)instruct[\u00ef\u00ee\u00ed\u00ec\u00f3]ons?',
 ]
 
 

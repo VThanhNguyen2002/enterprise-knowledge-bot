@@ -24,6 +24,17 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------ #
+# Cached backend client — constructed once per server process          #
+# ------------------------------------------------------------------ #
+@st.cache_resource
+def get_client() -> KnowledgeBotClient:
+    """
+    Instantiate KnowledgeBotClient once and reuse across all reruns.
+    @st.cache_resource keeps a single instance alive for the server lifetime.
+    """
+    return KnowledgeBotClient()
+
+# ------------------------------------------------------------------ #
 # Session state initialisation                                         #
 # ------------------------------------------------------------------ #
 if "messages" not in st.session_state:
@@ -32,7 +43,16 @@ if "messages" not in st.session_state:
 # ------------------------------------------------------------------ #
 # Dependency construction                                              #
 # ------------------------------------------------------------------ #
-client = KnowledgeBotClient()
+client = get_client()
+
+# ── Backend connectivity warning ──────────────────────────────────────
+if not client.check_health():
+    st.error(
+        "⚠️ **Backend không kết nối được.** "
+        "Vui lòng kiểm tra FastAPI server đang chạy tại `http://localhost:8000`. "
+        "Chức năng upload và chat sẽ không hoạt động.",
+        icon="🔴",
+    )
 
 # ------------------------------------------------------------------ #
 # Layout                                                               #

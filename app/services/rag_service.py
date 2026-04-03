@@ -129,12 +129,19 @@ Trả lời:"""
         loader = TextLoader(file_path, encoding='utf-8')
         docs = loader.load()
 
+        # Guard: reject empty files before any further processing
+        total_content = "".join(d.page_content for d in docs).strip()
+        if not total_content:
+            logger.warning(f"File rỗng bị từ chối: {filename}")
+            raise ValueError(f"File '{filename}' không có nội dung văn bản. Vui lòng kiểm tra lại.")
+
         for doc in docs:
             if _is_poisoned_content(doc.page_content):
                 logger.warning(f"CẢNH BÁO: Nội dung độc hại phát hiện trong {file_path}")
                 raise ValueError("Tài liệu vi phạm chính sách an toàn dữ liệu.")
             # ✅ Inject filename into every document's metadata
             doc.metadata["filename"] = filename
+
 
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.CHUNK_SIZE,
