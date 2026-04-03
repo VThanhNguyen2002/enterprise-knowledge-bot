@@ -50,6 +50,7 @@ env/
 data/chroma_db/
 chroma_data/         # ChromaDB persistent storage — never commit
 data/                # Uploaded documents
+temp_uploads/        # Celery async ingestion staging area — always ephemeral
 *.pdf
 *.docx
 *.md5

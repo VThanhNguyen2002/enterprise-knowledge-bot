@@ -68,7 +68,7 @@ celery_app.conf.update(
     bind=True,
     name="app.worker.async_ingest_document",
     max_retries=3,
-    default_retry_delay=10,          # Wait 10s before retry
+    default_retry_delay=10,
     acks_late=True,
     queue="ingest",
 )
@@ -76,23 +76,25 @@ def async_ingest_document(self, file_path: str) -> dict:
     """
     Async background task: ingest a document into ChromaDB.
 
-    This task is the async counterpart of `rag_service.ingest_document()`.
-    It decouples the upload HTTP response from the heavy embed+store operation.
+    Guarantees:
+        - temp file is ALWAYS deleted via try/finally (no disk leaks).
+        - On retry: file is preserved until the final attempt.
+        - On permanent failure: file is deleted on the last retry's finally block.
 
     Args:
-        file_path: Absolute path to the uploaded .txt file (saved to /app/data/).
+        file_path: Absolute path to the temp file (saved by the upload router).
 
     Returns:
-        dict with keys: status, filename, chunks_stored, message.
-
-    Raises:
-        Retries up to 3 times on transient errors (network, ChromaDB lock).
-        After max_retries, raises Reject to move task to dead-letter queue.
+        dict with keys: status, filename, message.
     """
-    logger.info(f"[async_ingest_document] START — file: {file_path}")
+    filename = os.path.basename(file_path)
+    logger.info(f"[async_ingest_document] START — {filename} (attempt {self.request.retries + 1})")
+
+    is_final_attempt = self.request.retries >= self.max_retries
+    cleanup_now = True   # default: clean up in finally
 
     try:
-        # ── Lazy import to avoid loading RAG service at worker startup ────────
+        # ── Lazy import: RAGService initialises HuggingFace model on first load ──
         from app.services.rag_service import rag_service
 
         result_message = rag_service.ingest_document(file_path)
@@ -100,31 +102,48 @@ def async_ingest_document(self, file_path: str) -> dict:
         logger.info(f"[async_ingest_document] SUCCESS — {result_message}")
         return {
             "status": "success",
-            "filename": os.path.basename(file_path),
+            "filename": filename,
             "message": result_message,
         }
 
     except ValueError as ve:
         # Non-retryable: poisoned content, empty file, validation error
         logger.warning(f"[async_ingest_document] REJECTED (non-retryable): {ve}")
+        # cleanup_now=True → finally block deletes the file
         raise self.reject(requeue=False)
 
     except FileNotFoundError as fnf:
-        # Non-retryable: file was deleted before task ran
+        # Non-retryable: temp file disappeared before task ran
         logger.error(f"[async_ingest_document] FILE NOT FOUND: {fnf}")
+        cleanup_now = False   # Nothing to delete
         raise self.reject(requeue=False)
 
     except Exception as exc:
-        # Retryable: transient DB errors, memory pressure, etc.
-        logger.warning(
-            f"[async_ingest_document] RETRY {self.request.retries + 1}"
-            f"/{self.max_retries} — {exc}"
-        )
+        # Retryable: transient ChromaDB lock, memory pressure, network hiccup
+        if is_final_attempt:
+            logger.error(f"[async_ingest_document] EXHAUSTED retries for {filename}: {exc}")
+            # cleanup_now=True → finally block cleans up on last attempt
+        else:
+            logger.warning(
+                f"[async_ingest_document] RETRY {self.request.retries + 1}"
+                f"/{self.max_retries} in {10 * (2 ** self.request.retries)}s — {exc}"
+            )
+            cleanup_now = False  # Preserve file for next retry attempt
         raise self.retry(exc=exc, countdown=10 * (2 ** self.request.retries))
 
+    finally:
+        # ── Guaranteed disk cleanup ────────────────────────────────────────────
+        if cleanup_now and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                logger.info(f"[async_ingest_document] Cleaned up temp file: {filename}")
+            except OSError as rm_err:
+                logger.warning(f"[async_ingest_document] Failed to delete temp file {filename}: {rm_err}")
 
-# ── TODO (Phase 1 → Phase 2): Add semantic cache invalidation task ─────────────
+
+# ── TODO (Phase 1 → Phase 2): Semantic cache invalidation ─────────────────────
 # @celery_app.task(name="app.worker.invalidate_semantic_cache")
 # def invalidate_semantic_cache(filename: str):
-#     """Flush cached LLM responses related to a specific document after re-ingestion."""
+#     """Flush cached LLM responses for a document after re-ingestion."""
 #     pass
+

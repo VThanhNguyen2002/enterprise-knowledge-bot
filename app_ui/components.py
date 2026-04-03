@@ -41,16 +41,32 @@ def render_sidebar(client: KnowledgeBotClient) -> None:
 
         if uploaded is not None:
             if st.button("Upload", use_container_width=True, type="primary"):
-                with st.spinner(f"Uploading **{uploaded.name}**…"):
+                with st.spinner(f"Submitting **{uploaded.name}**…"):
                     try:
                         result = client.upload_document(
                             file_bytes=uploaded.getvalue(),
                             filename=uploaded.name,
                         )
-                        st.toast(
-                            f"✅ {result.get('message', 'Uploaded successfully!')}",
-                            icon="✅",
-                        )
+                        task_id = result.get("task_id", "n/a")
+                        short_id = task_id[:8] if task_id != "n/a" else "n/a"
+
+                        if result.get("status") == "processing":
+                            st.toast(
+                                f"⏳ Uploaded! Processing in background (Task: {short_id}…)",
+                                icon="⏳",
+                            )
+                            st.info(
+                                f"📄 **{uploaded.name}** is being embedded in the background. "
+                                f"Wait ~30–60s before querying this document.  "
+                                f"Task ID: `{task_id}`",
+                                icon="ℹ️",
+                            )
+                        else:
+                            # Fallback: synchronous success (e.g. Celery not configured)
+                            st.toast(
+                                f"✅ {result.get('message', 'Uploaded successfully!')}",
+                                icon="✅",
+                            )
                     except Exception as e:
                         st.toast(f"❌ Upload failed: {e}", icon="❌")
 
